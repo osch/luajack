@@ -1,3 +1,9 @@
+---------------------------------------------------------------------------------------------
+--
+-- This examples handles jack clients from the gui main thread.
+--
+---------------------------------------------------------------------------------------------
+
 local fl = require("moonfltk")
 local timer = require("moonfltk.timer")
 
