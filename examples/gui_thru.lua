@@ -45,6 +45,7 @@ local PROCESS = [[
 ]]
 
 local clientIdCounter = 0
+local clients = {}
 local startNewClient
 
 startNewClient = function()
@@ -78,7 +79,7 @@ startNewClient = function()
     line2:type("horizontal") line2:spacing(dy)
     local newClientButton = fl.button(0, 0, 200, 10, "new Client")
     -- TODO: error handling for closed client
-    --local closeButton     = fl.button(0, 0, (200 - dy)/2, 10, "close")
+    local closeButton     = fl.button(0, 0, (200 - dy)/2, 10, "close")
     local gcButton        = fl.button(0, 0, (200 - dy)/2, 10, "collect\ngarbage")
     line2:done()
     
@@ -90,6 +91,7 @@ startNewClient = function()
     
     client:process_load(PROCESS, client, port_in, port_out, mute_rbuf)
     client:activate()
+    clients[#clients + 1] = client
 
     local function mute_cb(b) -- callback for the 'mute' button
        local gcs2 = gcs1
@@ -121,7 +123,7 @@ startNewClient = function()
     newClientButton:callback(startNewClient)
     gcButton:callback(function() local gcs2 = gcs1; collectgarbage() end)
     
-    --[[ TODO: error handling for closed client
+    ---[[ TODO: error handling for closed client
     closeButton:callback(function()
         local gcs2 = gcs1;
         client:close()
@@ -132,6 +134,11 @@ startNewClient = function()
         local gcs2 = gcs1
         w:hide()
         fl.unreference(w)
+        for i = #clients, 1, -1  do
+            if clients[i] == client then
+                table.remove(clients, i)
+            end
+        end
         --client:close() -- if not invoked, client will be closed by gc
     end)
     
@@ -142,6 +149,9 @@ end
 startNewClient()
 
 -- GUI thread main loop:
-while fl.wait() do 
+while fl.wait() do
+    for i = 1, #clients do
+        clients[i]:check_error()
+    end
 end
 print("Finished.")

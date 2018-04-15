@@ -2,6 +2,24 @@
 #include "process.h"
 #include "process_util.h"
 
+static int process_error_handler(lua_State* L)
+{
+    luaL_traceback(L, L, lua_tostring(L, 1), 1);
+    return 1;
+}
+
+static const char* lua_string_reader(lua_State* L, void* data, size_t* size)
+{
+    const char** scriptPtr = (const char**) data;
+    const char* script = *scriptPtr;
+    
+    if (script != NULL) {
+        *size = strlen(script);
+        *scriptPtr = NULL;
+    }
+    return script;
+}
+
 // TODO: load file
 static int process_load(lua_State* L)
 {
@@ -29,8 +47,16 @@ static int process_load(lua_State* L)
     luaL_openlibs(P);
     
     int chunkName = arg; // for file
+    if (true /* isFromScript*/) {
+        lua_Debug dbg;
+        lua_getstack(L, 1, &dbg);
+        lua_getinfo(L, "Sl", &dbg);
+        lua_pushfstring(L, "loaded in: %s:%d", dbg.short_src, dbg.currentline);
+        chunkName = lua_gettop(L);
+    }
     const char* script = lua_tostring(L, arg++); // TODO load file
-    int rc = luaL_loadstring(P, script);
+    int rc = lua_load(P, lua_string_reader, &script, lua_tostring(L, chunkName), NULL);
+
     if (rc != LUA_OK) {
         if (lua_isstring(P, -1)) 
             lua_pushstring(L, lua_tostring(P, -1));
@@ -39,14 +65,7 @@ static int process_load(lua_State* L)
         lua_close(P);
         return lua_error(L);
     }
-    if (true /* isFromScript*/) {
-        lua_Debug dbg;
-        lua_getstack(L, 1, &dbg);
-        lua_getinfo(L, "Sl", &dbg);
-        lua_pushfstring(L, "%s:%d", dbg.short_src, dbg.currentline);
-        chunkName = lua_gettop(L);
-        lua_pushvalue(L, -2); // the chunk function
-    }
+    
     int isErr = luajack_xmove(client->shared, P, L, chunkName, arg, lastArg);
     if (isErr) {
         lua_close(P);
@@ -72,6 +91,10 @@ static int process_load(lua_State* L)
     lua_gc(P, LUA_GCSTOP, 0);
 
     client->shared->processContext = P;
+   
+    lua_pushcfunction(P, process_error_handler);
+    client->shared->processErrorHandlerRef = luaL_ref(P, LUA_REGISTRYINDEX);
+   
     return 0;
 }
 
@@ -82,14 +105,26 @@ static int jack_process_callback(jack_nframes_t nframes, void* arg)
     
     client->currentProcessNframes = nframes;
     
-    if (L && client->processCallbackRef != LUA_NOREF) {
+    if (L && client->processCallbackRef != LUA_NOREF && !client->errorInProcessContext) {
         int oldTop = lua_gettop(L);
+        int errorHandler = oldTop + 1; lua_rawgeti(L, LUA_REGISTRYINDEX, client->processErrorHandlerRef);
         lua_rawgeti(L, LUA_REGISTRYINDEX, client->processCallbackRef);
         lua_pushinteger(L, nframes);
-        int rc = lua_pcall(L, 1, 0, 0);
+        int rc = lua_pcall(L, 1, 0, errorHandler);
         if (rc != LUA_OK) {
-             // TODO handle error in lua
-            printf("Error in process callback: %s\n", lua_tostring(L, -1));
+            async_mutex_lock(&client->mutex);
+            
+            //printf("Error in process callback: {%s}\n", lua_tostring(L, -1));
+            if (client->errorInProcessContext) {
+                free(client->errorInProcessContext);
+            }
+            const char* errmsg = lua_tostring(L, -1);
+            if (errmsg == NULL) {
+                errmsg = "unknown error";
+            }
+            client->errorInProcessContext = strdup(errmsg);
+            atomic_inc(&client->processContextErrorFlag);
+            async_mutex_unlock(&client->mutex);
         }
         lua_settop(L, oldTop);
     }

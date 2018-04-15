@@ -75,8 +75,12 @@ typedef struct {
     Mutex                    mutex;
     lua_State*               mainContext;
     lua_State*               processContext;
+    char*                    processContextChunkName;
     int                      processCallbackRef;
+    int                      processErrorHandlerRef;
     jack_nframes_t           currentProcessNframes;
+    AtomicCounter            processContextErrorFlag;
+    char*                    errorInProcessContext;
 }
 JackClientShared;
 

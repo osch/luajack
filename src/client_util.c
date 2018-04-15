@@ -140,6 +140,12 @@ void releaseClientShared(JackClientShared* shared)
 {
     if (shared && atomic_dec(&shared->refCounter) == 0) {
         async_mutex_destruct(&shared->mutex);
+        if (shared->processContextChunkName) {
+            free(shared->processContextChunkName);
+        }
+        if (shared->errorInProcessContext) {
+            free(shared->errorInProcessContext);
+        }
         free(shared);
     }
 }

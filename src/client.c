@@ -161,6 +161,34 @@ static int client_sleep(lua_State* L)
     return 0;
 }
 
+static int client_check_error(lua_State* L)
+{
+    JackClient* client = getCheckedClient(L, 1);
+    if (!client->isMaster) {
+        return luaL_argerror(L, 1, "method can only be called on master client object");
+    }
+    JackClientShared* shared = client->shared;
+    if (shared && atomic_get(&shared->processContextErrorFlag) > 0) {
+        async_mutex_lock(&shared->mutex);
+        
+        if (shared->errorInProcessContext) {
+            char* errmsg = shared->errorInProcessContext;
+            shared->errorInProcessContext = NULL;
+            shared->processContextErrorFlag = 0;
+            async_mutex_unlock(&shared->mutex);
+            
+            lua_pushstring(L, errmsg);
+            free (errmsg);
+            return lua_error(L);
+        }
+        else {
+            async_mutex_unlock(&shared->mutex);
+        }
+    }
+    return 0;
+}
+
+
 static int client_release(lua_State* L)
 {
     JackClient* client = getCheckedClient(L, 1);
@@ -178,7 +206,6 @@ static int client_close(lua_State* L)
     return 0;
 }
 
-
 /////////////////////////////////////////////////////////////////////////
 
 static const struct luaL_Reg ClientMethods[] = 
@@ -194,6 +221,7 @@ static const struct luaL_Reg ClientMethods[] =
     { "buffer_size",         buffer_size },
     { "close",               client_close},
     { "sleep",               client_sleep },
+    { "check_error",         client_check_error },
     { NULL, NULL } /* sentinel */
 };
 
@@ -218,6 +246,7 @@ static const struct luaL_Reg ModuleFunctions[] =
     { "deactivate",          deactivate },
     { "buffer_size",         buffer_size },
     { "sleep",               client_sleep },
+    { "client_check_error",  client_check_error },
     { NULL, NULL } /* sentinel */
 };
 
